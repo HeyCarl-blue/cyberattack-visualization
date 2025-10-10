@@ -5,42 +5,12 @@ const EngineType = {
     GRIDVIRUS: 1,
 }
 
-const h = 1;
-const h2 = h * h;
-const h5 = h2 * h2 * h;
-const h6 = h5 * h;
-const h9 = h6 * h2 * h;
-
-class Particle {
-    constructor() {
-        this.x = Math.random();
-    }
-}
-
-class FluidParticleEngine {
-
-    constructor () {
-        this.particles = [];
-    }
-
-    simulationStep (deltaTime) {
-
-    }
-}
-
-class GridVirusEngine {
-
-    simulationStep (deltaTime) {
-
-    }
-}
-
 export default class Engine extends EventTarget {
     constructor () {
         super();
         this.initTHREE();
-        this.fluidParticleEngine = new FluidParticleEngine();
-        this.gridVirusEngine = new GridVirusEngine();
+        this.fluidParticleEngine = this.fluidParticleEngine();
+        this.gridVirusEngine = new this.gridVirusEngine();
 
         // INIT SIMULATION AND RENDERING
         this.activeEngine = EngineType.FLUIDPARTICLE;
@@ -118,19 +88,19 @@ export default class Engine extends EventTarget {
     render (deltaTime) {
         switch (this.activeEngine) {
             case EngineType.FLUIDPARTICLE:
-                this.renderFluid(deltaTime);
+                return this.renderFluid();
             case EngineType.GRIDVIRUS:
-                this.renderGrid(deltaTime);
+                return this.renderGridVirus();
         }
 
         this.signalFrameRendered(deltaTime);
     }
 
-    renderFluid (deltaTime) {
+    renderFluid () {
 
     }
 
-    renderGrid (deltaTime) {
+    renderGridVirus () {
 
     }
 
@@ -153,5 +123,65 @@ export default class Engine extends EventTarget {
                 }
             }));
         });
+    }
+
+    fluidParticleEngine () {
+        const engine = this;
+
+        const h = 1;
+        const h2 = h * h;
+        const h5 = h2 * h2 * h;
+        const h6 = h5 * h;
+        const h9 = h6 * h2 * h;
+
+        const WPOLY_COEFF = 315.0 / (64.0 * Math.PI * h9);
+        const SPIKY_COEFF = -45.0 / (Math.PI * h6);
+        const LAPLACIAN_COEFF = 45.0 / (Math.PI * h5);
+
+        const Wpoly6 = function (r2) {
+            let temp = h2 - r2;
+            return WPOLY_COEFF * temp * temp * temp;
+        };
+
+        const Wspiky = function (r) {
+            let temp = h - r;
+            return SPIKY_COEFF * temp * temp / r;
+        };
+
+        const Wlaplacian = function (r) {
+            return LAPLACIAN_COEFF * (1 - r / h);
+        };
+
+        const particle = function () {
+            return {
+                // Particle positon
+                x: Math.random() * (engine.camera.right - engine.camera.left) + engine.camera.left,
+                y: Math.random() * (engine.camera.bottom - engine.camera.top) + engine.camera.top,
+                // Particle velocity
+                Vx: Math.random() - 0.5,
+                Vy: Math.random() - 0.5,
+                rho: 0,     // Density
+                p: 0,       // Pressure
+                // Particle applied force
+                Fx: 0,
+                Fy:0,
+            }
+        };
+
+        return {
+            simulationStep: function (deltaTime) {
+
+            },
+        };
+    }
+
+    gridVirusEngine () {
+
+        return {
+
+            simulationStep: function (deltaTime) {
+
+            },
+        };
     }
 }
