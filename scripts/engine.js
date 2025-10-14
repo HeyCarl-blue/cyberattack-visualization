@@ -22,6 +22,7 @@ export default class Engine extends EventTarget {
         this.activeEngine = EngineType.FLUIDPARTICLE;
         this.simulationStopped = false;
         this.lastTime = 0;
+        this.deltaTime = 0.0001;
     }
 
     initTHREE () {
@@ -103,22 +104,26 @@ export default class Engine extends EventTarget {
         return this.simulationStopped ? '▶' : '⏸';
     }
 
+    simulationStep () {
+        this.getActiveEngine().simulationStep();
+    }
+
     simulation (currentTime) {
+        currentTime *= 0.001;
+        this.deltaTime = currentTime - this.lastTime;
+        this.lastTime = currentTime;
+
         if (this.simulationStopped) {
             requestAnimationFrame(this.simulation);
             return;
         }
 
-        currentTime *= 0.001;
-        const deltaTime = currentTime - this.lastTime;
-        this.lastTime = currentTime;
-
-        this.getActiveEngine().simulationStep(deltaTime);
-        this.render(deltaTime);
+        this.simulationStep();
+        this.render();
 
         requestAnimationFrame(this.simulation);
 
-        this.signalFrameRendered(deltaTime);
+        this.signalFrameRendered();
     }
 
     render () {
@@ -127,12 +132,17 @@ export default class Engine extends EventTarget {
         this.renderer.render(this.scene, this.camera);
     }
 
-    signalFrameRendered (deltaTime) {
+    restart () {
+        this.scene.clear();
+        this.getActiveEngine().restart();
+    }
+
+    signalFrameRendered () {
         queueMicrotask(() => {
             this.dispatchEvent(new CustomEvent('frameRendered', {
                 detail: {
                     time: this.lastTime,
-                    fps: 1 / deltaTime,
+                    fps: 1 / this.deltaTime,
                 }
             }));
         });
@@ -161,9 +171,11 @@ export default class Engine extends EventTarget {
         const SPIKY_COEFF = -45.0 / (Math.PI * h6);
         const LAPLACIAN_COEFF = 45.0 / (Math.PI * h5);
 
-        const MAX_PARTICLES = 1000;
-        const GRAVITY = 9.8;
-        const FORCE_ATTRITION = 0.2;
+        const MAX_PARTICLES = 3200;
+        const GRAVITY = 0.98;
+        const FORCE_ATTRITION = 0.8;
+
+        const PARTICLE_RADIUS_MULTIPLIER = 0.006;
 
         const Wpoly6 = function (r2) {
             let temp = h2 - r2;
@@ -201,22 +213,56 @@ export default class Engine extends EventTarget {
         return {
             particles: [],
             particleMeshes: [],
-            particleGeometry: new THREE.CircleGeometry(10, 16),
-            particleMaterial: new THREE.MeshBasicMaterial({ color: 0x00ff00 }),
+            particleGeometry: new THREE.CircleGeometry(PARTICLE_RADIUS_MULTIPLIER, 16),
+            particleMaterial: new THREE.MeshBasicMaterial({ color: 0x00bbbb }),
             init: function () {
+                this.restart();
+            },
+            restart: function () {
                 this.particles = new Array(MAX_PARTICLES);
                 this.particlesMeshes = new Array(MAX_PARTICLES);
                 for (let i = 0; i < MAX_PARTICLES; i++) {
                     this.particles[i] = particle();
                     this.particleMeshes[i] = new THREE.Mesh(this.particleGeometry, this.particleMaterial);
+                    this.particleMeshes[i].position.x = this.particles[i].x;
+                    this.particleMeshes[i].position.y = this.particles[i].y;
+                    this.particleMeshes[i].position.z = -1;
                     engine.scene.add(this.particleMeshes[i]);
                 }
             },
-            applyForces: function (deltaTime) {
+            calculateForces: function () {
+                for (let i = 0; i < MAX_PARTICLES; i++) {
+                    // TODO: Density
 
+                    // TODO: Pressure
+
+                    // TODO: Viscosity
+
+                    // Gravity
+                    this.particles[i].Vy -= GRAVITY * engine.deltaTime;
+
+                    // Wall Forces
+                    const x = this.particles[i].x;
+                    const y = this.particles[i].y;
+                    const checkCollisionX = (x < engine.camera.left + PARTICLE_RADIUS_MULTIPLIER) || (x > engine.camera.right - PARTICLE_RADIUS_MULTIPLIER);
+                    const checkCollisionY = (y < engine.camera.bottom + PARTICLE_RADIUS_MULTIPLIER) || (y > engine.camera.top - PARTICLE_RADIUS_MULTIPLIER);
+                    if (checkCollisionX) {
+                        this.particles[i].Vx *= -FORCE_ATTRITION;
+                    }
+                    if (checkCollisionY) {
+                        this.particles[i].Vy *= -FORCE_ATTRITION;
+                    }
+                }
             },
-            simulationStep: function (deltaTime) {
-                this.applyForces(deltaTime);
+            applyForces: function () {
+                for (let i = 0; i < MAX_PARTICLES; i++) {
+                    this.particles[i].x += this.particles[i].Vx * engine.deltaTime;
+                    this.particles[i].y += this.particles[i].Vy * engine.deltaTime;
+                }
+            },
+            simulationStep: function () {
+                this.calculateForces();
+                this.applyForces();
             },
             render: function () {
                 for (let i = 0; i < MAX_PARTICLES; i++) {
@@ -233,7 +279,7 @@ export default class Engine extends EventTarget {
             init: function () {
 
             },
-            simulationStep: function (deltaTime) {
+            simulationStep: function () {
 
             },
             render: function () {

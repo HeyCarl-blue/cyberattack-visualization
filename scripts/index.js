@@ -18,7 +18,8 @@ function initGUI() {
     const nextFrameBtn = document.getElementById('nextFrameBtn');
 
     resetSimulationBtn.addEventListener('click', () => {
-        engine.reset();
+        engine.restart();
+        engine.render();
     });
 
     toggleSimulationBtn.addEventListener('click', () => {
@@ -28,12 +29,16 @@ function initGUI() {
     toggleSimulationBtn.innerHTML = engine.getSimulationPlayIcon();
 
     nextFrameBtn.addEventListener('click', () => {
-
+        engine.simulationStep();
+        engine.render();
     });
 
     const fpsLabel = document.getElementById('fpsLabel');
     engine.addEventListener('frameRendered', (event) => {
         fpsLabel.innerHTML = `FPS: ${event.detail.fps.toFixed(2)}`;
+        if (event.detail.fps < 30) {
+            console.warn(`low fps: ${event.detail.fps}`);
+        }
     });
 }
 

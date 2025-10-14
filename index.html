@@ -68,6 +68,8 @@
         }
 
         .simulation-btn {
+            position: relative;
+            display: inline-block;
             background: #ddd;
             border: 2px solid #000;
             z-index: 1001;
@@ -86,6 +88,25 @@
         .simulation-btn:active {
             transform: translate(6px, 6px);
             box-shadow: 0 0 0 #000;
+        }
+
+        .tooltiptext {
+            visibility: hidden;
+            width: 130px;
+            background-color: black;
+            color: #ffffff;
+            text-align: center;
+            padding: 5px 0;
+            border-radius: 6px;
+            position: absolute;
+            z-index: 1;
+            top: 100%;
+            left: 50%;
+            margin-left: -65px;
+        }
+
+        .simulation-btn:hover .tooltiptext {
+            visibility: visible;
         }
 
         #resetSimulationBtn:hover {
@@ -190,6 +211,10 @@
             font-weight: 900;
         }
 
+        #fpsLabel {
+            -webkit-text-stroke: 1px white;
+        }
+
         canvas {
             display: block;
         }
@@ -205,18 +230,27 @@
 
     <aside class="sidebar" id="sidebar">
         <div class="sidebar-header">
-            <h2>Parameters</h2>
+            <h2>Controls</h2>
         </div>
         <div class="sidebar-content">
-
+            
         </div>
     </aside>
 
     <div class="simulation-controls">
         <p></p>
-        <button class="simulation-btn" id="resetSimulationBtn">⭮</button>
-        <button class="simulation-btn" id="toggleSimulationBtn">▶</button>
-        <button class="simulation-btn" id="nextFrameBtn">⏭</button>
+        <button class="simulation-btn" id="resetSimulationBtn">
+            ⭮
+            <span class="tooltiptext">Reset Simulation</span>
+        </button>
+        <button class="simulation-btn" id="toggleSimulationBtn">
+            ▶
+            <span class="tooltiptext">Play/Pause Simulation</span>
+        </button>
+        <button class="simulation-btn" id="nextFrameBtn">
+            ⏭
+            <span class="tooltiptext">Next Frame</span>
+        </button>
         <p id="fpsLabel">FPS:</p>
     </div>
 
