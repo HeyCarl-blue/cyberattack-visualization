@@ -37,7 +37,7 @@ function initGUI() {
     engine.addEventListener('frameRendered', (event) => {
         fpsLabel.innerHTML = `FPS: ${event.detail.fps.toFixed(2)}`;
         if (event.detail.fps < 30) {
-            console.warn(`low fps: ${event.detail.fps}`);
+            // console.warn(`low fps: ${event.detail.fps}`);
         }
     });
 }

@@ -105,7 +105,7 @@ export default class Engine extends EventTarget {
     }
 
     simulationStep () {
-        this.getActiveEngine().simulationStep();
+        this.getActiveEngine().simulationStep(this.deltaTime);
     }
 
     simulation (currentTime) {
@@ -174,20 +174,24 @@ export default class Engine extends EventTarget {
         const MAX_PARTICLES = 3200;
         const GRAVITY = 0.98;
         const FORCE_ATTRITION = 0.8;
+        const PARTICLE_MASS = 1;
+        const GAS_CONSTANT = 120;
+        const REST_DENSITY = 0;
+        const VISCOSITY_CONSTANT = 3;
 
         const PARTICLE_RADIUS_MULTIPLIER = 0.006;
 
-        const Wpoly6 = function (r2) {
+        const wPoly6 = function (r2) {
             let temp = h2 - r2;
             return WPOLY_COEFF * temp * temp * temp;
         };
 
-        const Wspiky = function (r) {
+        const wSpiky = function (r) {
             let temp = h - r;
             return SPIKY_COEFF * temp * temp / r;
         };
 
-        const Wlaplacian = function (r) {
+        const wLaplacian = function (r) {
             return LAPLACIAN_COEFF * (1 - r / h);
         };
 
@@ -203,12 +207,48 @@ export default class Engine extends EventTarget {
 
                 rho: 0,     // Density
                 p: 0,       // Pressure
-
-                // Particle applied force
-                Fx: 0,
-                Fy:0,
             }
         };
+
+        const distSquared = function (p1, p2) {
+            const distX = p2.x - p1.x;
+            const distY = p2.y - p1.y;
+            return distX * distX + distY * distY;
+        };
+
+        const addDensity = function (p1, p2) {
+            let r2 = distSquared(p1, p2);
+            if (r2 < h2) {
+                let temp = PARTICLE_MASS * wPoly6(r2);
+                p1.rho += temp;
+                p2.rho += temp;
+            }
+        };
+
+        const addForces = function (p1, p2) {
+            let r2 = distSquared(p1, p2);
+            if (r2 < h2 && r2 != 0) {
+                let r = Math.sqrt(r2); + 1e-6;
+
+                if (r == 0) {
+                    console.warn("division by zero");
+                }
+
+                // Pressure Force
+                let temp1 = PARTICLE_MASS * wSpiky(r) * (p2.p + p1.p) / (2 * p2.rho);
+                let Vx = temp1 * (p2.x - p1.x);
+                let Vy = temp1 * (p2.y - p1.y);
+
+                // Viscosity Force
+                let temp2 = VISCOSITY_CONSTANT * PARTICLE_MASS * wLaplacian(r) / p2.rho;
+                Vx += temp2 * (p2.Vx - p1.Vx);
+                Vy += temp2 * (p2.Vy - p1.Vy);
+                p1.Vx += Vx / p1.rho;
+                p1.Vy += Vy / p1.rho;
+                p2.Vx -= Vx / p2.rho;
+                p2.Vy -= Vy / p2.rho;
+            }
+        }
 
         return {
             particles: [],
@@ -230,39 +270,47 @@ export default class Engine extends EventTarget {
                     engine.scene.add(this.particleMeshes[i]);
                 }
             },
+            calculateDensity: function () {
+                for (let i = 0; i < MAX_PARTICLES; i++) {
+                    const p1 = this.particles[i];
+                    for (let j = 0; j < MAX_PARTICLES; j++) {
+                        const p2 = this.particles[j];
+                        addDensity(p1, p2);
+                    }
+                    p1.p = Math.max(GAS_CONSTANT * (p1.rho - REST_DENSITY), 0);
+                }
+            },
             calculateForces: function () {
                 for (let i = 0; i < MAX_PARTICLES; i++) {
-                    // TODO: Density
-
-                    // TODO: Pressure
-
-                    // TODO: Viscosity
-
-                    // Gravity
-                    this.particles[i].Vy -= GRAVITY * engine.deltaTime;
+                    const p1 = this.particles[i];
+                    for (let j = 0; j < MAX_PARTICLES; j++) {
+                        const p2 = this.particles[j];
+                        addForces(p1, p2);
+                    }
 
                     // Wall Forces
-                    const x = this.particles[i].x;
-                    const y = this.particles[i].y;
+                    const x = p1.x;
+                    const y = p1.y;
                     const checkCollisionX = (x < engine.camera.left + PARTICLE_RADIUS_MULTIPLIER) || (x > engine.camera.right - PARTICLE_RADIUS_MULTIPLIER);
                     const checkCollisionY = (y < engine.camera.bottom + PARTICLE_RADIUS_MULTIPLIER) || (y > engine.camera.top - PARTICLE_RADIUS_MULTIPLIER);
                     if (checkCollisionX) {
-                        this.particles[i].Vx *= -FORCE_ATTRITION;
+                        p1.Vx *= -FORCE_ATTRITION;
                     }
                     if (checkCollisionY) {
-                        this.particles[i].Vy *= -FORCE_ATTRITION;
+                        p1.Vy *= -FORCE_ATTRITION;
                     }
                 }
             },
-            applyForces: function () {
-                for (let i = 0; i < MAX_PARTICLES; i++) {
-                    this.particles[i].x += this.particles[i].Vx * engine.deltaTime;
-                    this.particles[i].y += this.particles[i].Vy * engine.deltaTime;
-                }
-            },
-            simulationStep: function () {
+            simulationStep: function (deltaTime) {
+                this.calculateDensity();
                 this.calculateForces();
-                this.applyForces();
+                for (let i = 0; i < MAX_PARTICLES; i++) {
+                    // Apply Gravity
+                    this.particles[i].Vy -= GRAVITY;
+                    // Update Positions
+                    this.particles[i].x += this.particles[i].Vx * deltaTime;
+                    this.particles[i].y += this.particles[i].Vy * deltaTime;
+                }
             },
             render: function () {
                 for (let i = 0; i < MAX_PARTICLES; i++) {
