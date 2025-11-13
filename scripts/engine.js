@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import {parsePcapFile} from "./pcap_parser";
 
 export const EngineType = {
     FLUIDPARTICLE: 0,
@@ -72,6 +73,15 @@ export class Engine extends EventTarget {
         this.renderer.setSize(this.canvas.width, this.canvas.height);
     }
 
+    setPcapFile (file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const pcapFile = parsePcapFile(e.target.result);
+            console.log(pcapFile);
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
     pauseSimulation () {
         this.simulationStopped = true;
         this.signalSimulationToggled();
@@ -135,10 +145,6 @@ export class Engine extends EventTarget {
     restart () {
         this.scene.clear();
         this.getActiveEngine().restart();
-    }
-
-    setFluidParameter (parameter, value) {
-        this.fluidParticleEngine.setParameter(parameter, value);
     }
 
     signalFrameRendered () {
@@ -218,8 +224,6 @@ export class Engine extends EventTarget {
 
                 this.refreshServerCapacity();
                 engine.scene.add(this.curve1, this.curve2);
-
-                console.log(engine.scene.children);
             },
 
             setParameter: function (parameter, value) {
