@@ -77,7 +77,7 @@ export class Engine extends EventTarget {
         const reader = new FileReader();
         reader.onload = (e) => {
             const pcapFile = parsePcapFile(e.target.result);
-            console.log(pcapFile);
+            console.log(pcapFile.packets[0]);
         };
         reader.readAsArrayBuffer(file);
     }
