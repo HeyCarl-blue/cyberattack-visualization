@@ -76,8 +76,9 @@ export class Engine extends EventTarget {
     setPcapFile (file) {
         const reader = new FileReader();
         reader.onload = (e) => {
+            this.scene.clear();
             const pcapFile = parsePcapFile(e.target.result);
-            console.log(pcapFile.packets[0]);
+            this.fluidParticleEngine.loadPcap(pcapFile);
         };
         reader.readAsArrayBuffer(file);
     }
@@ -137,8 +138,6 @@ export class Engine extends EventTarget {
     }
 
     render () {
-        this.getActiveEngine().render();
-
         this.renderer.render(this.scene, this.camera);
     }
 
@@ -171,7 +170,9 @@ export class Engine extends EventTarget {
     newFluidParticleEngine () {
         const engine = this;
 
-        const MAX_PARTICLES = 1000;
+        const DELAY = 1000;
+
+        const MAX_PARTICLES = 100;
         const GRAVITY = 0.98;
         // const BOUNCE_DAMPING = 0.5;
 
@@ -182,69 +183,130 @@ export class Engine extends EventTarget {
         const PARTICLE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x00bbbb });
         const CURVE_MATERIAL = new THREE.LineBasicMaterial({ color: 0x000000 });
 
-        const particle = function (x, y) {
+        const particle = function (x, y, particleGeometry = PARTICLE_GEOMETRY, particleMaterial = PARTICLE_MATERIAL) {
+            const particleMesh = new THREE.Mesh(particleGeometry, particleMaterial);
+            particleMesh.position.x = x;
+            particleMesh.position.y = y;
+            particleMesh.position.z = -1;
+
             return {
-                // Particle positon
-                x: x,
-                y: y,
+                // Particle mesh
+                mesh: particleMesh,
 
                 // Particle velocity
                 Vx: 0,
                 Vy: 0,
+
+                // Check collision to another particle
+                checkCollision: function (p) {
+                    // let c1 = new THREE.Vector3();
+                    // this.mesh.getWorldPosition(c1);
+                    // const c2 = new THREE.Vector3();
+                    // p.mesh.getWorldPosition(c2);
+                    const c1 = this.mesh.position;
+                    const c2 = p.mesh.position;
+                    const r1 = this.mesh.geometry.parameters.radius;
+                    const r2 = p.mesh.geometry.parameters.radius;
+                    const dist = new THREE.Vector2(c1.x - c2.x, c1.y - c2.y);
+                    const rSq = (r1 + r2) * (r1 + r2);
+                    if (dist.length() < r1 + r2) {
+                        return {collision: true, dist: dist.normalize()};
+                    }
+                    return {collision: false, dist: null};
+                },
+
+                isInMovement: function () {
+                    return this.Vx != 0 || this.Vy != 0;
+                }
             }
+        };
+
+        const particleSource = function (x, y, spawnRate=1, packetsToSpawn=[]) {
+            return {
+                x: x,
+                y: y,
+                spawnRate: spawnRate,
+                packetsToSpawn: packetsToSpawn,
+            };
         };
 
         return {
             particles: [],
             particleSources: [],
-            particleMeshes: [],
             parameters: {
                 particleRadius: PARTICLE_RADIUS_MULTIPLIER,
                 serverCapacity: 0.5,
+                maxParticles: MAX_PARTICLES,
             },
             particleGeometry: PARTICLE_GEOMETRY,
             particleMaterial: PARTICLE_MATERIAL,
             curveMaterial: CURVE_MATERIAL,
             curve1: null,
             curve2: null,
+
             init: function () {
                 this.restart();
             },
+
+            addSource : function (source) {
+                this.particleSources.push(source);
+            },
+
+            loadPcap(pcapFile) {
+                // TODO: Case for non-ethernet frame
+                const packets = pcapFile.packets.filter(element => {
+                    return element.packet.payload !== undefined;
+                });
+                // let sourceIPs = new Set();
+                // let destIPs = new Set();
+
+                const baseMilliseconds = packets[0].header.tsSec * 1000 + packets[0].header.tsUsec;
+                const convertIntoMillisecondsFromStart = function (tsSec, tsUsec) {
+                    return (tsSec * 1000 + tsUsec) - baseMilliseconds;
+                }
+
+                const packetsToSpawn = packets.map((element) => {
+                    return {
+                        milliseconds: convertIntoMillisecondsFromStart(element.header.tsSec, element.header.tsUsec),
+                        payload: element.packet.payload
+                    }
+                });
+                this.addSource(particleSource(0, 0.25, 0, packetsToSpawn));
+                console.log(packetsToSpawn);
+                this.restart();
+            },
+
+            spawnParticle (source) {
+                const posx = source.x + Math.random() * 0.01;
+                const posy = source.y + Math.random() * 0.01;
+                const p = particle(posx, posy)
+                this.particles.push(p);
+                engine.scene.add(p.mesh);
+            },
+
             restart: function () {
-                this.particles = new Array(MAX_PARTICLES);
-                this.particlesMeshes = new Array(MAX_PARTICLES);
-                for (let i = 0; i < MAX_PARTICLES; i++) {
-                    this.particles[i] = particle(0, 0);
-                    this.particleMeshes[i] = new THREE.Mesh(this.particleGeometry, this.particleMaterial);
-                    this.particleMeshes[i].position.x = this.particles[i].x;
-                    this.particleMeshes[i].position.y = this.particles[i].y;
-                    this.particleMeshes[i].position.z = -1;
-                    engine.scene.add(this.particleMeshes[i]);
+                this.particles = [];
+                // TODO RESTART FROM SAVED STATE
+                if (this.particleSources.length <= 0) {
+                    // this.particles = new Array(this.parameters.maxParticles);
+                    // this.particlesMeshes = new Array(this.parameters.maxParticles);
+                    // for (let i = 0; i < this.parameters.maxParticles; i++) {
+                    //     this.particles[i] = particle(0, 0);
+                    //     engine.scene.add(this.particles[i].mesh);
+                    // }
+                    this.spawnParticle(particleSource(0, 0));
+                    setTimeout(() => {this.spawnParticle(particleSource(0, 0))}, 1000);
+                } else {
+                    this.particles = [];
+                    for (let source of this.particleSources) {
+                        for (let packet of source.packetsToSpawn) {
+                            setTimeout(() => {this.spawnParticle(source)}, packet.milliseconds + DELAY);
+                        }
+                    }
                 }
 
                 this.refreshServerCapacity();
                 engine.scene.add(this.curve1, this.curve2);
-            },
-
-            setParameter: function (parameter, value) {
-                switch (parameter) {
-                    case FluidParameter.PARTICLE_RADIUS:
-                        this.setParticleRadius(value);
-                    case FluidParameter.SERVER_CAPACITY:
-                        this.setServerCapacity(value);
-                    default:
-                        console.error(`Invalid parameter: ${parameter}`);
-                }
-            },
-
-            setParticleRadius: function (radius) {
-                this.parameters.particleRadius = radius * PARTICLE_RADIUS_MULTIPLIER;
-            },
-
-            setServerCapacity: function (capacity) {
-                this.parameters.serverCapacity = capacity;
-                console.log(capacity);
-                this.refreshServerCapacity();
             },
 
             refreshServerCapacity: function () {
@@ -269,23 +331,60 @@ export class Engine extends EventTarget {
             },
 
             simulationStep: function (deltaTime) {
-                for (let i = 0; i < MAX_PARTICLES; i++) {
-                    const p = this.particles[i];
-
+                for (let p of this.particles) {
                     //Apply Gravity
                     p.Vy -= GRAVITY * deltaTime;
+
+                    // Update Positions
+                    p.mesh.position.x += p.Vx * deltaTime;
+                    p.mesh.position.y += p.Vy * deltaTime;
                     
-                    p.x += p.Vx * deltaTime;
-                    p.y += p.Vy * deltaTime;
+                    console.log(p.mesh.geometry.parameters.radius);
+
+                    // Check Collision
+                    this.checkParticleCollision(p);
+
+                    this.checkWallCollisions(p);
                 }
             },
 
-            render: function () {
-                for (let i = 0; i < MAX_PARTICLES; i++) {
-                    this.particleMeshes[i].position.x = this.particles[i].x;
-                    this.particleMeshes[i].position.y = this.particles[i].y;
+            checkParticleCollision: function (currentParticle) {
+                for (let p of this.particles) {
+                    if (!currentParticle.isInMovement() || currentParticle === p) continue;
+                    const collResult = currentParticle.checkCollision(p);
+                    if (collResult.collision) {
+                        const collisionPoint = collResult.dist.multiplyScalar(currentParticle.mesh.geometry.parameters.radius);
+                        currentParticle.mesh.position.x += collisionPoint.x;
+                        currentParticle.mesh.position.y += collisionPoint.y;
+                        currentParticle.Vx = 0;
+                        currentParticle.Vy = 0;
+                    }
                 }
-            }
+            },
+
+            checkWallCollisions: function (p) {
+                const leftLimit = engine.camera.left + (this.parameters.particleRadius * 0.5);
+                const rightLimit = engine.camera.right - (this.parameters.particleRadius * 0.5);
+                const topLimit = engine.camera.top - (this.parameters.particleRadius * 0.5);
+                const bottomLimit = engine.camera.bottom + (this.parameters.particleRadius * 0.5);
+
+                if (p.mesh.position.x >= rightLimit) {
+                    p.mesh.position.x = rightLimit;
+                    p.Vx = 0;
+                }
+                if (p.mesh.position.x <= leftLimit) {
+                    p.mesh.position.x = leftLimit;
+                    p.Vx = 0;
+                }
+                if (p.mesh.position.y <= bottomLimit) {
+                    p.mesh.position.y = bottomLimit;
+                    p.Vy = 0;
+                }
+                if (p.mesh.position.y >= topLimit) {
+                    p.mesh.position.y = topLimit;
+                    p.Vy = 0;
+                }
+            },
         };
     }
 
@@ -298,9 +397,6 @@ export class Engine extends EventTarget {
             simulationStep: function () {
 
             },
-            render: function () {
-
-            }
         };
     }
 }

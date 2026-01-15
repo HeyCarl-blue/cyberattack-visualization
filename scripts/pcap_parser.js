@@ -112,11 +112,11 @@ function parseIPv4Payload (data) {
             ttl: ttl,
             protocol: protocol,
             headerChecksum: headerChecksum,
-            sourceIp: {
+            sourceIP: {
                 array: sourceIp,
                 string: `${sourceIp[0]}.${sourceIp[1]}.${sourceIp[2]}.${sourceIp[3]}`,
             },
-            destIp: {
+            destIP: {
                 array: destIp,
                 string: `${destIp[0]}.${destIp[1]}.${destIp[2]}.${destIp[3]}`,
             },
@@ -140,7 +140,7 @@ function parseEthernetFrame (data) {
         case EthernetProtocolType.IPv6:
             break;
         default:
-            console.warn(`Unrecognized packet's EtherType: ${etherType}`)
+            console.warn(`Unrecognized packet's EtherType: ${etherType}`);
     }
 
     return {
