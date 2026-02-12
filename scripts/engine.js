@@ -11,7 +11,117 @@ export const FluidParameter = {
     SERVER_CAPACITY: 1,
 };
 
+const CollisionType = {
+    NO_COLLISION: 0,
+    COLLISION: 1,
+    INTERPENETRATING: -1
+}
+
 const FRUSTUM_SIZE = 1;
+
+class Quadtree {
+    constructor (boundary, capacity = 4) {
+        this.boundary = boundary;
+        this.capacity = capacity;
+        this.particles = [];
+        this.divided = false;
+        this.northeast = null;
+        this.southeast = null;
+        this.southwest = null;
+        this.northwest = null;
+    }
+
+    subdivide () {
+        const x = this.boundary.x;
+        const y = this.boundary.y;
+        const w = this.boundary.width * 0.5;
+        const h = this.boundary.height * 0.5;
+
+        const ne = { x: x + w, y: y + h, width: w, height: h };
+        const nw = { x: x, y: y + h, width: w, height: h };
+        const se = { x: x + w, y: y, width: w, height: h };
+        const sw = { x: x, y: y, width: w, height: h };
+
+        this.northeast = new Quadtree(ne, this.capacity);
+        this.northwest = new Quadtree(nw, this.capacity);
+        this.southeast = new Quadtree(se, this.capacity);
+        this.southwest = new Quadtree(sw, this.capacity);
+
+        this.divided = true;
+    }
+
+    contains (particle) {
+        const pos = particle.position();
+        return (
+            pos.x >= this.boundary.x &&
+            pos.x < this.boundary.x + this.boundary.width &&
+            pos.y >= this.boundary.y &&
+            pos.y < this.boundary.y + this.boundary.height
+        );
+    }
+
+    insert (particle) {
+        if (!this.contains(particle)) {
+            return false;
+        }
+
+        if (this.particles.length <= this.capacity) {
+            this.particles.push(particle);
+            return true;
+        }
+
+        if (!this.divided) {
+            this.subdivide();
+        }
+
+        return (
+            this.northeast.insert(particle) ||
+            this.northwest.insert(particle) ||
+            this.southeast.insert(particle) ||
+            this.southwest.insert(particle)
+        );
+    }
+
+    intersect (range) {
+        return !(
+            range.x > this.boundary.x + this.boundary.width ||
+            range.x + range.width < this.boundary.x ||
+            range.y > this.boundary.y + this.boundary.height ||
+            range.y + range.height < this.boundary.y
+        )
+    }
+
+    particleInRange (particle, range) {
+        const pos = particle.position();
+        return (
+            pos.x >= range.x &&
+            pos.x < range.x + range.width &&
+            pos.y >= range.y &&
+            pos.y < range.y + range.height
+        );
+    }
+
+    query (range, found = []) {
+        if (!this.intersect(range)) {
+            return found;
+        }
+
+        for (let p of this.particles) {
+            if (this.particleInRange(p, range)) {
+                found.push(p);
+            }
+        }
+
+        if (this.divided) {
+            this.northeast.query(range, found);
+            this.northwest.query(range, found);
+            this.southeast.query(range, found);
+            this.southwest.query(range, found);
+        }
+
+        return found;
+    }
+}
 
 export class Engine extends EventTarget {
     constructor () {
@@ -79,6 +189,7 @@ export class Engine extends EventTarget {
             this.scene.clear();
             const pcapFile = parsePcapFile(e.target.result);
             this.fluidParticleEngine.loadPcap(pcapFile);
+            this.fluidParticleEngine.restart();
         };
         reader.readAsArrayBuffer(file);
     }
@@ -174,7 +285,10 @@ export class Engine extends EventTarget {
 
         const MAX_PARTICLES = 100;
         const GRAVITY = 0.98;
-        // const BOUNCE_DAMPING = 0.5;
+        const COLLISION_TOLERANCE = 0.0001;
+        const COEFFICIENT_OF_RESTITUTION = 0.5;
+        const LINEAR_DRAG = 0.25;
+        const PARTICLE_MASS = 1;
 
         const PILLARS_HEIGHT = 0.25;
         const PARTICLE_RADIUS_MULTIPLIER = 0.01;
@@ -197,62 +311,133 @@ export class Engine extends EventTarget {
                 Vx: 0,
                 Vy: 0,
 
+                // when the server starts processing the "particle"
+                startProcessingTime: Infinity,
+
                 // Check collision to another particle
                 checkCollision: function (p) {
-                    // let c1 = new THREE.Vector3();
-                    // this.mesh.getWorldPosition(c1);
-                    // const c2 = new THREE.Vector3();
-                    // p.mesh.getWorldPosition(c2);
-                    const c1 = this.mesh.position;
-                    const c2 = p.mesh.position;
-                    const r1 = this.mesh.geometry.parameters.radius;
-                    const r2 = p.mesh.geometry.parameters.radius;
-                    const dist = new THREE.Vector2(c1.x - c2.x, c1.y - c2.y);
-                    const rSq = (r1 + r2) * (r1 + r2);
-                    if (dist.length() < r1 + r2) {
-                        return {collision: true, dist: dist.normalize()};
+                    const c1 = this.position();
+                    const c2 = p.position();
+                    const r = this.radius() + p.radius();
+                    const d = new THREE.Vector2(c1.x - c2.x, c1.y - c2.y);
+                    const s = d.length() - r;
+                    const normal = d.normalize();
+
+                    const relativeVelocity = new THREE.Vector2(this.Vx - p.Vx, this.Vy - p.Vy);
+                    const vrn = relativeVelocity.dot(normal);
+
+                    if ( (Math.abs(s) <= COLLISION_TOLERANCE) && (vrn < 0.0) ) {
+                        return {
+                            collision: CollisionType.COLLISION,
+                            normal: normal,
+                            relativeVelocity: relativeVelocity,
+                            collisionPoint: normal.multiplyScalar(this.radius() + p.radius())
+                        }
+                    } else if (s < -COLLISION_TOLERANCE) {
+                        return {
+                            collision: CollisionType.INTERPENETRATING,
+                            normal: normal,
+                            relativeVelocity: relativeVelocity,
+                            collisionPoint: normal.multiplyScalar(this.radius() + p.radius())
+                        }
+                    } else {
+                        return {
+                            collision: CollisionType.NO_COLLISION,
+                            normal: normal,
+                            relativeVelocity: relativeVelocity,
+                            collisionPoint: normal.multiplyScalar(this.radius() + p.radius())
+                        }
                     }
-                    return {collision: false, dist: null};
                 },
 
                 isInMovement: function () {
                     return this.Vx != 0 || this.Vy != 0;
+                },
+
+                position: function () {
+                    return this.mesh.position;
+                },
+
+                radius: function () {
+                    return this.mesh.geometry.parameters.radius;
                 }
             }
         };
 
-        const particleSource = function (x, y, spawnRate=1, packetsToSpawn=[]) {
+        const particleSource = function (x, y, spawnQueue=[]) {
             return {
                 x: x,
                 y: y,
-                spawnRate: spawnRate,
-                packetsToSpawn: packetsToSpawn,
+                spawnQueue: spawnQueue.map(item => ({
+                    time: item.milliseconds,
+                    payload: item.payload,
+                    spawned: false
+                })).sort((a, b) => a.time - b.time),
             };
         };
 
         return {
             particles: [],
             particleSources: [],
+            quadtree: null,
             parameters: {
                 particleRadius: PARTICLE_RADIUS_MULTIPLIER,
                 serverCapacity: 0.5,
                 maxParticles: MAX_PARTICLES,
+                serverSpeed: Infinity
             },
             particleGeometry: PARTICLE_GEOMETRY,
             particleMaterial: PARTICLE_MATERIAL,
-            curveMaterial: CURVE_MATERIAL,
-            curve1: null,
-            curve2: null,
+            serverRepresentation: {
+                material: CURVE_MATERIAL,
+                curve1: null,
+                curve2: null,
+                curveMesh1: null,
+                curveMesh2: null,
+                lineMesh1: null,
+                lineMesh2: null
+            },
+            inputPcap: null,
+            simulationTime: 0,
 
             init: function () {
                 this.restart();
             },
 
-            addSource : function (source) {
+            addSource: function (source) {
                 this.particleSources.push(source);
             },
 
+            buildQuadTree: function () {
+                const boundary = {
+                    x: engine.camera.left,
+                    y: engine.camera.bottom,
+                    width: engine.camera.right - engine.camera.left,
+                    height: engine.camera.top - engine.camera.bottom
+                };
+
+                this.quadtree = new Quadtree(boundary, 4);
+
+                for (let p of this.particles) {
+                    this.quadtree.insert(p);
+                }
+            },
+
+            getNearbyParticles: function (p) {
+                const searchRadius = p.radius() * 4;
+
+                const range = {
+                    x: p.position().x - searchRadius,
+                    y: p.position().y - searchRadius,
+                    width: searchRadius * 2,
+                    height: searchRadius * 2
+                };
+
+                return this.quadtree.query(range);
+            },
+
             loadPcap(pcapFile) {
+                this.inputPcap = pcapFile;
                 // TODO: Case for non-ethernet frame
                 const packets = pcapFile.packets.filter(element => {
                     return element.packet.payload !== undefined;
@@ -265,15 +450,15 @@ export class Engine extends EventTarget {
                     return (tsSec * 1000 + tsUsec) - baseMilliseconds;
                 }
 
-                const packetsToSpawn = packets.map((element) => {
+                const spawnQueue = packets.map((element) => {
                     return {
                         milliseconds: convertIntoMillisecondsFromStart(element.header.tsSec, element.header.tsUsec),
                         payload: element.packet.payload
                     }
                 });
-                this.addSource(particleSource(0, 0.25, 0, packetsToSpawn));
-                console.log(packetsToSpawn);
-                this.restart();
+                this.particleSources = [];
+                this.addSource(particleSource(0.5, 0.25, spawnQueue));
+                
             },
 
             spawnParticle (source) {
@@ -284,80 +469,164 @@ export class Engine extends EventTarget {
                 engine.scene.add(p.mesh);
             },
 
+            removeParticle (particle) {
+                const idx = this.particles.indexOf(particle);
+                if (idx > -1) {
+                    this.particles.splice(idx, 1);
+                    engine.scene.remove(particle.mesh);
+                }
+            },
+
             restart: function () {
+                for (let p of this.particles) {
+                    engine.scene.remove(p.mesh);
+                }
                 this.particles = [];
-                // TODO RESTART FROM SAVED STATE
-                if (this.particleSources.length <= 0) {
-                    // this.particles = new Array(this.parameters.maxParticles);
-                    // this.particlesMeshes = new Array(this.parameters.maxParticles);
-                    // for (let i = 0; i < this.parameters.maxParticles; i++) {
-                    //     this.particles[i] = particle(0, 0);
-                    //     engine.scene.add(this.particles[i].mesh);
-                    // }
-                    this.spawnParticle(particleSource(0, 0));
-                    setTimeout(() => {this.spawnParticle(particleSource(0, 0))}, 1000);
-                } else {
-                    this.particles = [];
-                    for (let source of this.particleSources) {
-                        for (let packet of source.packetsToSpawn) {
-                            setTimeout(() => {this.spawnParticle(source)}, packet.milliseconds + DELAY);
-                        }
+
+                this.simulationTime = 0;
+                
+                for (let source of this.particleSources) {
+                    for (let item of source.spawnQueue) {
+                        item.spawned = false;
                     }
                 }
 
                 this.refreshServerCapacity();
-                engine.scene.add(this.curve1, this.curve2);
+                this.renderServerRepresentation();
+            },
+
+            renderServerRepresentation: function () {
+                engine.scene.remove(
+                    this.serverRepresentation.curveMesh1,
+                    this.serverRepresentation.curveMesh2,
+                    this.serverRepresentation.lineMesh1,
+                    this.serverRepresentation.lineMesh2
+                )
+                engine.scene.add(
+                    this.serverRepresentation.curveMesh1,
+                    this.serverRepresentation.curveMesh2,
+                    this.serverRepresentation.lineMesh1,
+                    this.serverRepresentation.lineMesh2
+                );
             },
 
             refreshServerCapacity: function () {
-                const curve1 = new THREE.QuadraticBezierCurve (
-                    new THREE.Vector2(engine.camera.left, 0),
-                    new THREE.Vector2(engine.camera.left, engine.camera.bottom + PILLARS_HEIGHT),
-                    new THREE.Vector2(-this.parameters.serverCapacity * 0.5, engine.camera.bottom + PILLARS_HEIGHT),
-                );
-                const curve2 = new THREE.QuadraticBezierCurve (
-                    new THREE.Vector2(engine.camera.right, 0),
-                    new THREE.Vector2(engine.camera.right, engine.camera.bottom + PILLARS_HEIGHT),
-                    new THREE.Vector2(this.parameters.serverCapacity * 0.5, engine.camera.bottom + PILLARS_HEIGHT),
-                );
-                const curve1Geometry = new THREE.BufferGeometry().setFromPoints(curve1.getPoints(50));
-                const curve2Geometry = new THREE.BufferGeometry().setFromPoints(curve2.getPoints(50));
+                const x0 = engine.camera.left;
+                const x1 = (engine.camera.left + engine.camera.right - this.parameters.serverCapacity) * 0.5;
 
-                this.curve1 = new THREE.Line(curve1Geometry, this.curveMaterial);
-                this.curve2 = new THREE.Line(curve2Geometry, this.curveMaterial);
+                const y0 = (engine.camera.top + engine.camera.bottom) * 0.5;
+                const y1 = engine.camera.bottom + PILLARS_HEIGHT;
 
-                this.curve1.position.z = -1;
-                this.curve2.position.z = -1;
+                const xx0 = engine.camera.right;
+                const xx1 = (engine.camera.left + engine.camera.right + this.parameters.serverCapacity) * 0.5;
+
+                const bottom = engine.camera.bottom;
+
+                this.serverRepresentation.curve1 = new THREE.QuadraticBezierCurve (
+                    new THREE.Vector2(x0, y0),
+                    new THREE.Vector2(x0, y1),
+                    new THREE.Vector2(x1, y1)
+                );
+                this.serverRepresentation.curve2 = new THREE.QuadraticBezierCurve (
+                    new THREE.Vector2(xx0, y0),
+                    new THREE.Vector2(xx0, y1),
+                    new THREE.Vector2(xx1, y1)
+                );
+                const curve1Geometry = new THREE.BufferGeometry().setFromPoints(this.serverRepresentation.curve1.getPoints(50));
+                const curve2Geometry = new THREE.BufferGeometry().setFromPoints(this.serverRepresentation.curve2.getPoints(50));
+
+                this.serverRepresentation.curveMesh1 = new THREE.Line(curve1Geometry, this.serverRepresentation.material);
+                this.serverRepresentation.curveMesh2 = new THREE.Line(curve2Geometry, this.serverRepresentation.material);
+
+                const line1Geometry = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(x1, y1, -1),
+                    new THREE.Vector3(x1, bottom, -1)
+                ]);
+
+                const line2Geometry = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(xx1, y1, -1),
+                    new THREE.Vector3(xx1, bottom, -1)
+                ]);
+
+                this.serverRepresentation.lineMesh1 = new THREE.Line(line1Geometry, this.serverRepresentation.material);
+                this.serverRepresentation.lineMesh2 = new THREE.Line(line2Geometry, this.serverRepresentation.material);
+
+                this.serverRepresentation.curveMesh1.position.z = -1;
+                this.serverRepresentation.curveMesh2.position.z = -1;
             },
 
             simulationStep: function (deltaTime) {
+                this.simulationTime += 1000 * deltaTime;
+
+                for (let source of this.particleSources) {
+                    for (let item of source.spawnQueue) {
+                        if (!item.spawned && item.time <= this.simulationTime) {
+                            this.spawnParticle(source);
+                            item.spawned = true;
+                        }
+                    }
+                }
+
+                // Collision Check
+                this.buildQuadTree();
+
                 for (let p of this.particles) {
-                    //Apply Gravity
+                    // APPLY FORCES
                     p.Vy -= GRAVITY * deltaTime;
 
-                    // Update Positions
-                    p.mesh.position.x += p.Vx * deltaTime;
-                    p.mesh.position.y += p.Vy * deltaTime;
-                    
-                    console.log(p.mesh.geometry.parameters.radius);
-
-                    // Check Collision
+                    // Check collisions with particles
                     this.checkParticleCollision(p);
 
+                    // check collisions with screen boundaaries
                     this.checkWallCollisions(p);
+
+                    // check collision with server representation
+                    this.checkCollisionWithServer(p);
+
+                    // APPLY DISPLACEMENT
+                    p.position().x += p.Vx * deltaTime;
+                    p.position().y += p.Vy * deltaTime;
+
+                    // check if server starts processing packet
+                    if (p.startProcessingTime === Infinity && p.position().y <= engine.camera.bottom + PILLARS_HEIGHT) {
+                        p.startProcessingTime = this.simulationTime;
+                    }
+                    // should the particle be processed and removed?
+                    if (this.simulationTime - p.startProcessingTime >= this.parameters.serverSpeed) {
+                        this.removeParticle(p);
+                    }
                 }
             },
 
             checkParticleCollision: function (currentParticle) {
-                for (let p of this.particles) {
-                    if (!currentParticle.isInMovement() || currentParticle === p) continue;
+                const nearby = this.getNearbyParticles(currentParticle);
+
+                for (let p of nearby) {
+                    if (!currentParticle.isInMovement() || currentParticle === p) {
+                        continue;
+                    }
                     const collResult = currentParticle.checkCollision(p);
-                    if (collResult.collision) {
-                        const collisionPoint = collResult.dist.multiplyScalar(currentParticle.mesh.geometry.parameters.radius);
-                        currentParticle.mesh.position.x += collisionPoint.x;
-                        currentParticle.mesh.position.y += collisionPoint.y;
-                        currentParticle.Vx = 0;
-                        currentParticle.Vy = 0;
+
+                    if (collResult.collision === CollisionType.COLLISION) {
+                        
+                        // if (collResult.collision === CollisionType.INTERPENETRATING) {
+                        //     currentParticle.position().x = collResult.collisionPoint.x;
+                        //     currentParticle.position().y = collResult.collisionPoint.y;
+                        // }
+
+                        // Apply impulse force
+                        const normalRelVel = collResult.relativeVelocity.dot(collResult.normal);
+                        const n2 = collResult.normal.dot(collResult.normal);
+
+                        const j = ( -(1 + COEFFICIENT_OF_RESTITUTION) * normalRelVel ) / ( n2 * 2 * PARTICLE_MASS);
+
+                        const impulseVelocity = collResult.normal.multiplyScalar(j / PARTICLE_MASS);
+
+                        currentParticle.Vx += impulseVelocity.x;
+                        currentParticle.Vy += impulseVelocity.y;
+
+                        p.Vx -= impulseVelocity.x;
+                        p.Vy -= impulseVelocity.y;
                     }
                 }
             },
@@ -368,22 +637,29 @@ export class Engine extends EventTarget {
                 const topLimit = engine.camera.top - (this.parameters.particleRadius * 0.5);
                 const bottomLimit = engine.camera.bottom + (this.parameters.particleRadius * 0.5);
 
-                if (p.mesh.position.x >= rightLimit) {
-                    p.mesh.position.x = rightLimit;
+                if (p.position().x >= rightLimit) {
+                    p.position().x = rightLimit;
                     p.Vx = 0;
                 }
-                if (p.mesh.position.x <= leftLimit) {
-                    p.mesh.position.x = leftLimit;
+                if (p.position().x <= leftLimit) {
+                    p.position().x = leftLimit;
                     p.Vx = 0;
                 }
-                if (p.mesh.position.y <= bottomLimit) {
-                    p.mesh.position.y = bottomLimit;
+                if (p.position().y <= bottomLimit) {
+                    p.position().y = bottomLimit;
                     p.Vy = 0;
                 }
-                if (p.mesh.position.y >= topLimit) {
-                    p.mesh.position.y = topLimit;
+                if (p.position().y >= topLimit) {
+                    p.position().y = topLimit;
                     p.Vy = 0;
                 }
+            },
+
+            checkCollisionWithServer: function (p) {
+                const TOTAL_POINTS = 50.0;
+                for (let i = 0.0; i < 1.0; i += 1.0 / TOTAL_POINTS) {
+                    
+                }  
             },
         };
     }
