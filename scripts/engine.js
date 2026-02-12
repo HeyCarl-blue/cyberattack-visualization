@@ -657,10 +657,17 @@ export class Engine extends EventTarget {
 
             checkCollisionWithServer: function (p) {
                 const TOTAL_POINTS = 50.0;
-                for (let i = 0.0; i < 1.0; i += 1.0 / TOTAL_POINTS) {
-                    
-                }  
+                const INCREMENT = 1.0 / TOTAL_POINTS;
+                let collision = CollisionType.NO_COLLISION;
+
+                let i = 0.0;
+                while (i < 1.0) {
+                    const j = 1 + INCREMENT;
+
+                }
             },
+
+            
         };
     }
 
