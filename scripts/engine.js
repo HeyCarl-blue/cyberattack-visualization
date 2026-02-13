@@ -457,7 +457,7 @@ export class Engine extends EventTarget {
                     }
                 });
                 this.particleSources = [];
-                this.addSource(particleSource(0.5, 0.25, spawnQueue));
+                this.addSource(particleSource(0, 0, spawnQueue));
                 
             },
 
@@ -656,18 +656,102 @@ export class Engine extends EventTarget {
             },
 
             checkCollisionWithServer: function (p) {
+                const x1 = (engine.camera.left + engine.camera.right - this.parameters.serverCapacity) * 0.5;
+                const y1 = engine.camera.bottom + PILLARS_HEIGHT;
+                const xx1 = (engine.camera.left + engine.camera.right + this.parameters.serverCapacity) * 0.5;
+
+                const bottom = engine.camera.bottom;
+
+                const start1 = new THREE.Vector2(x1, y1);
+                const end1 = new THREE.Vector2(x1, bottom);
+
+                const start2 = new THREE.Vector2(xx1, y1);
+                const end2 = new THREE.Vector2(xx1, bottom);
+
+                const coll1 = this.collisionParticleSegment(p, start1, end1);
+                const coll2 = this.collisionParticleSegment(p, start2, end2);
+
+                if (coll1.collision !== CollisionType.NO_COLLISION || coll2.collision !== CollisionType.NO_COLLISION) {
+                    p.Vx *= -0.8;
+                }
+
                 const TOTAL_POINTS = 50.0;
                 const INCREMENT = 1.0 / TOTAL_POINTS;
-                let collision = CollisionType.NO_COLLISION;
+
+                const curve1 = this.serverRepresentation.curve1;
+                const curve2 = this.serverRepresentation.curve2;
+
+                let collisionResult = {
+                    collision: CollisionType.NO_COLLISION
+                };
 
                 let i = 0.0;
-                while (i < 1.0) {
-                    const j = 1 + INCREMENT;
+                while (collisionResult.collision === CollisionType.NO_COLLISION && i < 1.0) {
+                    const j = i + INCREMENT;
+                    const p0 = curve1.getPoint(i);
+                    const p1 = curve1.getPoint(j);
 
+                    const p0_2 = curve2.getPoint(i);
+                    const p1_2 = curve2.getPoint(j);
+
+                    collisionResult = this.collisionParticleSegment(p, p0, p1);
+                    if (collisionResult.collision !== CollisionType.NO_COLLISION) {
+                        break;
+                    }
+                    collisionResult = this.collisionParticleSegment(p, p0_2, p1_2);
+
+                    i = j;
                 }
+
+                if (collisionResult.collision === CollisionType.NO_COLLISION) {
+                    return;
+                }
+
+                p.Vx *= -0.8;
+                p.Vy *= -0.8;
             },
 
-            
+            collisionParticleParticle: function (p1, p2) {
+
+            },
+
+            collisionParticleSegment: function (particle, startSeg, endSeg) {
+                const dir = endSeg.sub(startSeg);
+                const oc = new THREE.Vector2(particle.position().x, particle.position().y).sub(startSeg);
+                
+                const a = dir.lengthSq();
+                const b = -2.0 * dir.dot(oc);
+                const c = oc.lengthSq() - particle.radius() * particle.radius();
+
+                const discriminant = b * b - 4.0 * a * c;
+                const d = Math.sqrt(discriminant);
+
+                const t0 = (-b - d) / (2.0 * a);
+                const t1 = (-b + d) / (2.0 * a);
+
+                if (discriminant < 0.0 || t1 < 0.0 || t0 > 1.0) {
+                    return {
+                        collision: CollisionType.NO_COLLISION
+                    };
+                }
+
+                // if (discriminant === 0.0) {
+                //     const f = startSeg.multiplyScalar(1 - t0);
+                //     const d = endSeg.multiplyScalar(t0);
+                //     return {
+                //         collision: CollisionType.COLLISION,
+                //         collisionPoint: f.add(d),
+                //     }
+                // } else {
+                //     const firstPoint = startSeg.multiplyScalar(1 - t0).add(endSeg.multiplyScalar(t0));
+                //     const secondPoint = startSeg.multiplyScalar(1 - t1).add(endSeg.multiplyScalar(t1));
+                //     return {
+                //         collision: CollisionType.INTERPENETRATING,
+                //         collisionPoint: firstPoint.multiplyScalar(0.5).add(secondPoint.multiplyScalar(0.5)),
+                //     }
+                // }
+                return { collision: CollisionType.COLLISION };
+            },
         };
     }
 
